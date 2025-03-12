@@ -1,132 +1,168 @@
 import os
 import json
-import datetime
-import csv
-import nltk
-import ssl
-import streamlit as st
 import random
+import joblib
+import streamlit as st
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
+import time
+import csv
+from datetime import datetime
 
-ssl._create_default_https_context = ssl._create_unverified_context
-nltk.data.path.append(os.path.abspath("nltk_data"))
-nltk.download('punkt')
+class Chatbot:
+    def __init__(self, intents_file):
+        """
+        Initializes the chatbot by loading intents and training the model.
+        """
+        self.intents = self.load_intents(intents_file)
+        self.vectorizer = TfidfVectorizer()
+        self.clf = LogisticRegression(random_state=0, max_iter=10000)
+        self.model_path = "chatbot_model.joblib"
+        self.vectorizer_path = "vectorizer.joblib"
+        self.load_or_train_model()
 
-# Load intents from the JSON file
-file_path = os.path.abspath("intents.json")
-with open(file_path, "r") as file:
-    intents = json.load(file)
+    def load_intents(self, file_path):
+        """
+        Loads intents from a JSON file.
+        """
+        try:
+            with open(file_path, "r") as file:
+                return json.load(file)
+        except FileNotFoundError:
+            st.error("The intents file was not found. Please ensure 'intents.json' exists.")
+            st.stop()
+        except json.JSONDecodeError:
+            st.error("The intents file is not valid JSON. Please check the file format.")
+            st.stop()
 
-# Create the vectorizer and classifier
-vectorizer = TfidfVectorizer()
-clf = LogisticRegression(random_state=0, max_iter=10000)
+    def load_or_train_model(self):
+        """
+        Loads the pre-trained model and vectorizer if they exist; otherwise, trains the model.
+        """
+        if os.path.exists(self.model_path) and os.path.exists(self.vectorizer_path):
+            self.clf = joblib.load(self.model_path)
+            self.vectorizer = joblib.load(self.vectorizer_path)
+        else:
+            self.train_model()
 
-# Preprocess the data
-tags = []
-patterns = []
-for intent in intents:
-    for pattern in intent['patterns']:
-        tags.append(intent['tag'])
-        patterns.append(pattern)
-
-# training the model
-x = vectorizer.fit_transform(patterns)
-y = tags
-clf.fit(x, y)
-
-def chatbot(input_text):
-    input_text = vectorizer.transform([input_text])
-    tag = clf.predict(input_text)[0]
-    for intent in intents:
-        if intent['tag'] == tag:
-            response = random.choice(intent['responses'])
-            return response
+    def train_model(self):
+        """
+        Trains the chatbot model using the intents data.
+        """
+        tags, patterns = [], []
+        for intent in self.intents:
+            for pattern in intent['patterns']:
+                tags.append(intent['tag'])
+                patterns.append(pattern)
         
-counter = 0
+        x = self.vectorizer.fit_transform(patterns)
+        y = tags
+        self.clf.fit(x, y)
+        
+        # Save the trained model and vectorizer
+        joblib.dump(self.clf, self.model_path)
+        joblib.dump(self.vectorizer, self.vectorizer_path)
+
+    def get_response(self, input_text):
+        """
+        Generates a response for the given user input.
+        """
+        input_text = self.vectorizer.transform([input_text])
+        tag = self.clf.predict(input_text)[0]
+        for intent in self.intents:
+            if intent['tag'] == tag:
+                return random.choice(intent['responses'])
+        return "I'm sorry, I don't understand that. Can you rephrase?"
+
+def save_conversation(user_input, response):
+    """
+    Saves the conversation to a CSV file for history.
+    """
+    with open("chat_log.csv", "a", newline="", encoding="utf-8") as csvfile:
+        csv_writer = csv.writer(csvfile)
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        csv_writer.writerow([user_input, response, timestamp])
+
+def about_section():
+    """
+    Displays the About section with information about the chatbot and the project.
+    """
+    st.title("About the Chatbot")
+    st.write("""
+    This chatbot is built using Natural Language Processing (NLP) techniques to understand and respond to user inputs based on predefined intents. 
+    It uses the following technologies:
+    - **Streamlit**: For the web-based interface.
+    - **Scikit-learn**: For text vectorization and intent classification.
+    - **Joblib**: For saving and loading the trained model.
+    """)
+
+    st.subheader("How It Works")
+    st.write("""
+    1. The chatbot is trained on a dataset of intents, patterns, and responses stored in `intents.json`.
+    2. When a user inputs a message, the chatbot uses a trained Logistic Regression model to predict the intent.
+    3. Based on the predicted intent, the chatbot selects a random response from the corresponding intent's responses.
+    """)
+
+    st.subheader("Project Goals")
+    st.write("""
+    - To create a simple yet effective chatbot that can handle basic user queries.
+    - To demonstrate the use of NLP and machine learning in building conversational agents.
+    - To provide a user-friendly interface for interacting with the chatbot.
+    """)
+
+    st.subheader("Future Enhancements")
+    st.write("""
+    - Add support for multi-language conversations.
+    - Integrate with external APIs for real-time information (e.g., weather, news).
+    - Improve the chatbot's ability to handle complex and context-aware conversations.
+    """)
 
 def main():
-    global counter
-    st.title("Intents of Chatbot using NLP")
+    """
+    Main function to run the Streamlit chatbot interface.
+    """
+    st.sidebar.title("Menu")
+    menu_options = ["Home", "About", "Conversation History"]
+    choice = st.sidebar.selectbox("Choose an option", menu_options)
 
-    # Create a sidebar menu with options
-    menu = ["Home", "Conversation History", "About"]
-    choice = st.sidebar.selectbox("Menu", menu)
-
-    # Home Menu
     if choice == "Home":
-        st.write("Welcome to the chatbot. Please type a message and press Enter to start the conversation.")
+        st.title("Chatbot using NLP")
+        st.write("Welcome to the chatbot. Type a message and press Enter to start the conversation.")
 
-        # Check if the chat_log.csv file exists, and if not, create it with column names
-        if not os.path.exists('chat_log.csv'):
-            with open('chat_log.csv', 'w', newline='', encoding='utf-8') as csvfile:
-                csv_writer = csv.writer(csvfile)
-                csv_writer.writerow(['User Input', 'Chatbot Response', 'Timestamp'])
+        # Initialize chatbot
+        chatbot = Chatbot("intents.json")
 
-        counter += 1
-        user_input = st.text_input("You:", key=f"user_input_{counter}")
-
+        # User input and chatbot response
+        user_input = st.text_input("You:", key="user_input")
         if user_input:
+            with st.spinner("Thinking..."):
+                time.sleep(1)  # Simulate processing time
+                response = chatbot.get_response(user_input)
+            
+            st.text_area("Chatbot:", value=response, height=120)
+            save_conversation(user_input, response)
 
-            # Convert the user input to a string
-            user_input_str = str(user_input)
-
-            response = chatbot(user_input)
-            st.text_area("Chatbot:", value=response, height=120, max_chars=None, key=f"chatbot_response_{counter}")
-
-            # Get the current timestamp
-            timestamp = datetime.datetime.now().strftime(f"%Y-%m-%d %H:%M:%S")
-
-            # Save the user input and chatbot response to the chat_log.csv file
-            with open('chat_log.csv', 'a', newline='', encoding='utf-8') as csvfile:
-                csv_writer = csv.writer(csvfile)
-                csv_writer.writerow([user_input_str, response, timestamp])
-
+            # Stop the chatbot if the user says goodbye
             if response.lower() in ['goodbye', 'bye']:
                 st.write("Thank you for chatting with me. Have a great day!")
                 st.stop()
 
-    # Conversation History Menu
-    elif choice == "Conversation History":
-        # Display the conversation history in a collapsible expander
-        st.header("Conversation History")
-        # with st.beta_expander("Click to see Conversation History"):
-        with open('chat_log.csv', 'r', encoding='utf-8') as csvfile:
-            csv_reader = csv.reader(csvfile)
-            next(csv_reader)  # Skip the header row
-            for row in csv_reader:
-                st.text(f"User: {row[0]}")
-                st.text(f"Chatbot: {row[1]}")
-                st.text(f"Timestamp: {row[2]}")
-                st.markdown("---")
-
     elif choice == "About":
-        st.write("The goal of this project is to create a chatbot that can understand and respond to user input based on intents. The chatbot is built using Natural Language Processing (NLP) library and Logistic Regression, to extract the intents and entities from user input. The chatbot is built using Streamlit, a Python library for building interactive web applications.")
+        about_section()
 
-        st.subheader("Project Overview:")
-
-        st.write("""
-        The project is divided into two parts:
-        1. NLP techniques and Logistic Regression algorithm is used to train the chatbot on labeled intents and entities.
-        2. For building the Chatbot interface, Streamlit web framework is used to build a web-based chatbot interface. The interface allows users to input text and receive responses from the chatbot.
-        """)
-
-        st.subheader("Dataset:")
-
-        st.write("""
-        The dataset used in this project is a collection of labelled intents and entities. The data is stored in a list.
-        - Intents: The intent of the user input (e.g. "greeting", "budget", "about")
-        - Entities: The entities extracted from user input (e.g. "Hi", "How do I create a budget?", "What is your purpose?")
-        - Text: The user input text.
-        """)
-
-        st.subheader("Streamlit Chatbot Interface:")
-
-        st.write("The chatbot interface is built using Streamlit. The interface includes a text input box for users to input their text and a chat window to display the chatbot's responses. The interface uses the trained model to generate responses to user input.")
-
-        st.subheader("Conclusion:")
-
-        st.write("In this project, a chatbot is built that can understand and respond to user input based on intents. The chatbot was trained using NLP and Logistic Regression, and the interface was built using Streamlit. This project can be extended by adding more data, using more sophisticated NLP techniques, deep learning algorithms.")
+    elif choice == "Conversation History":
+        st.title("Conversation History")
+        if os.path.exists("chat_log.csv"):
+            with open("chat_log.csv", "r", encoding="utf-8") as csvfile:
+                csv_reader = csv.reader(csvfile)
+                next(csv_reader)  # Skip header
+                for row in csv_reader:
+                    st.text(f"User: {row[0]}")
+                    st.text(f"Chatbot: {row[1]}")
+                    st.text(f"Timestamp: {row[2]}")
+                    st.markdown("---")
+        else:
+            st.write("No conversation history found.")
 
 if __name__ == '__main__':
-    main()
+    main()  
